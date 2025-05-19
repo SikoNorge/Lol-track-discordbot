@@ -4,8 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField } = require('discord.js');
 const axios = require('axios');
+const { calculateUtilityScore } = require('./utils/utilityCalculator'); // Importiere die ausgelagerte Funktion
 
 const FOCUS_DATA_PATH = path.join(__dirname, 'focus_player_data.json');
+// WICHTIG: Ersetze "der-einzig-wahre-talk" durch die ECHTE numerische ID deines Kanals
+// oder lasse das Array leer: const ALLOWED_CHANNEL_IDS = []; um die Beschränkung aufzuheben.
+const ALLOWED_CHANNEL_IDS = ["1374125421460852916"];
 
 // --- Helferfunktionen für Datenspeicherung ---
 function loadFocusData() {
@@ -51,10 +55,10 @@ const client = new Client({
     partials: [Partials.Channel, Partials.Message],
 });
 
-const LOL_DDRAGON_VERSION = "14.10.1"; // Regelmäßig prüfen und anpassen!
+const LOL_DDRAGON_VERSION = "15.10.1"; // Regelmäßig prüfen und anpassen!
 const POLLING_INTERVAL_MS = 30 * 60 * 1000; // 30 Minuten
 const MATCHES_TO_CHECK_PER_POLL = 5;
-const MAX_RECENT_GAMES = 10; // Max. Anzahl Spiele in der Historie für Streaks
+const MAX_RECENT_GAMES = 10;
 
 // --- Helferfunktion für Win/Loss Text ---
 function winStatus(win) {
@@ -76,49 +80,61 @@ async function analyzeAndPostMatch(matchId, puuid, targetChannel, playerInfo, is
         const matchData = matchDetailsResponse.data;
 
         if (!matchData || !matchData.info || !matchData.info.gameEndTimestamp) {
-            console.log(`[analyzeAndPostMatch] Match ${matchId} unvollständig. Überspringe.`);
+            console.log(`[analyzeAndPostMatch] Match ${matchId} unvollständig oder ohne End-Timestamp. Überspringe.`);
             return null;
         }
         const playerStats = matchData.info.participants.find(p => p.puuid === puuid);
-        if (!playerStats) return null;
+        if (!playerStats) {
+            console.log(`[analyzeAndPostMatch] Spielerdaten für PUUID ${puuid} nicht im Match ${matchId} gefunden.`);
+            return null;
+        }
 
         const kills = playerStats.kills;
         const deaths = playerStats.deaths;
         const assists = playerStats.assists;
-        let kdaRatio = deaths === 0 ? (kills + assists) : ((kills + assists) / deaths);
-        if (deaths === 0 && (kills > 0 || assists > 0) && kdaRatio === 0) kdaRatio = kills + assists;
+        let kdaRatio = deaths === 0 ? (kills + assists) * 1.2 : (kills + assists) / deaths; // Kleiner Bonus für keine Tode, wenn Assists/Kills da sind
+        if (deaths === 0 && (kills > 0 || assists > 0) && kdaRatio === 0) kdaRatio = (kills + assists) * 1.2;
+
 
         const totalDamageToChampions = playerStats.totalDamageDealtToChampions;
         const goldEarned = playerStats.goldEarned;
-        const totalGameDamage = matchData.info.participants.reduce((sum, p) => sum + p.totalDamageDealtToChampions, 0);
-        const averageGameDamage = matchData.info.participants.length > 0 ? Math.round(totalGameDamage / matchData.info.participants.length) : 0;
-        const totalGameGold = matchData.info.participants.reduce((sum, p) => sum + p.goldEarned, 0);
-        const averageGameGold = matchData.info.participants.length > 0 ? Math.round(totalGameGold / matchData.info.participants.length) : 0;
+        const totalGameDamageAllPlayers = matchData.info.participants.reduce((sum, p) => sum + p.totalDamageDealtToChampions, 0);
+        const averageGameDamage = matchData.info.participants.length > 0 ? Math.round(totalGameDamageAllPlayers / matchData.info.participants.length) : 0;
+        const totalGameGoldAllPlayers = matchData.info.participants.reduce((sum, p) => sum + p.goldEarned, 0);
+        const averageGameGold = matchData.info.participants.length > 0 ? Math.round(totalGameGoldAllPlayers / matchData.info.participants.length) : 0;
+
+        // HIER wird die ausgelagerte Funktion aufgerufen!
+        const utilityScore = calculateUtilityScore(playerStats, matchData.info.participants, matchData.info.gameDuration);
 
         const isGoodKDA = kdaRatio > 1;
         let specialKdaMessage = isGoodKDA ? "**WAS EINE KD VON ÜBER 1?!?!?!** 🔥\n" : "";
         let gameResponseMessage = isGoodKDA ? "🎉 Super Runde! 🎉" : "Da war der Kopf wohl nicht auf Hochtouren!";
         if (deaths === 0 && (kills > 0 || assists > 0)) gameResponseMessage = "✨ PERFEKTE KDA! ✨";
 
-        const embedTitlePrefix = fromPolling ? "Neues Spiel entdeckt: " : "";
+        const embedTitlePrefix = fromPolling ? "Neues Spiel entdeckt: " : (isInitialFocusAnalysis ? "Analyse Spiel: " : "");
+
         const embed = new EmbedBuilder()
             .setTitle(`${embedTitlePrefix}${playerStats.championName} - ${matchData.info.gameMode}`)
-            .setColor(isGoodKDA ? '#34A853' : '#EA4335')
+            .setColor(utilityScore >= 7.5 ? '#34A853' : (utilityScore >= 4.5 ? '#FBBC05' : '#EA4335')) // Grün >=7.5, Gelb >=4.5, sonst Rot
             .setDescription(`${specialKdaMessage}${winStatus(playerStats.win)} (${Math.floor(matchData.info.gameDuration / 60)}m ${matchData.info.gameDuration % 60}s)\n*${gameResponseMessage}*`)
             .setThumbnail(`http://ddragon.leagueoflegends.com/cdn/${LOL_DDRAGON_VERSION}/img/champion/${playerStats.championName}.png`)
             .addFields(
                 { name: 'K/D/A', value: `${kills}/${deaths}/${assists} (${kdaRatio.toFixed(2)})`, inline: true },
-                { name: 'Schaden an Champs', value: `${totalDamageToChampions.toLocaleString('de-DE')} (Avg: ${averageGameDamage.toLocaleString('de-DE')})`, inline: true },
-                { name: 'Gold', value: `${goldEarned.toLocaleString('de-DE')} (Avg: ${averageGameGold.toLocaleString('de-DE')})`, inline: true }
+                { name: 'Nützlichkeit', value: `**${utilityScore} / 10**`, inline: true },
+                { name: 'Schaden an Champs', value: `${totalDamageToChampions.toLocaleString('de-DE')} (Avg: ${averageGameDamage.toLocaleString('de-DE')})`, inline: false }, // inline: false für mehr Platz
+                { name: 'Gold', value: `${goldEarned.toLocaleString('de-DE')} (Avg: ${averageGameGold.toLocaleString('de-DE')})`, inline: true },
+                { name: 'Vision Score', value: playerStats.visionScore.toString(), inline: true },
+                { name: 'Objective Dmg', value: (playerStats.damageDealtToObjectives || 0).toLocaleString('de-DE'), inline: true }
             )
             .setTimestamp(new Date(matchData.info.gameEndTimestamp))
             .setFooter({ text: `Match ID: ${matchId} | Für ${playerInfo.riotId}` });
+
         if (targetChannel) await targetChannel.send({ embeds: [embed] }).catch(console.error);
 
-        return { matchId, win: playerStats.win, kdaRatio, gameEndTimestamp: matchData.info.gameEndTimestamp };
+        return { matchId, win: playerStats.win, kdaRatio, gameEndTimestamp: matchData.info.gameEndTimestamp, utilityScore }; // Utility Score zurückgeben
     } catch (error) {
         console.error(`[analyzeAndPostMatch] Fehler für Match ${matchId} (PUUID ${puuid}):`, error.response ? JSON.stringify(error.response.data) : error.message);
-        if (targetChannel && error.response && error.response.status === 429) {
+        if (targetChannel && error.response?.status === 429) {
             await targetChannel.send(`API Limit erreicht beim Abrufen von Match ${matchId}.`).catch(console.error);
         }
         return null;
@@ -127,159 +143,126 @@ async function analyzeAndPostMatch(matchId, puuid, targetChannel, playerInfo, is
 
 // --- Streak-Logik Funktionen ---
 async function checkAndAnnounceStreaks(recentGames, targetChannel, playerInfo, guildId) {
-    if (!targetChannel || recentGames.length < 3) return;
-
+    if (!targetChannel || !playerInfo || recentGames.length < 3) return; // playerInfo hinzugefügt für gameName
     const lastThreeGames = recentGames.slice(0, 3);
-    const playerFocusData = focusData[guildId]?.focusedPlayer; // Zugriff auf die Daten zum Speichern von Streak-Flags
+    const playerFocusData = focusData[guildId]?.focusedPlayer;
+    if (!playerFocusData) return;
 
-    // 3 Siege in Folge
-    if (lastThreeGames.every(game => game.win === true)) {
+    // Win Streak
+    if (lastThreeGames.every(g => g.win)) {
         if (!playerFocusData.winStreakNotified) {
-            const embed = new EmbedBuilder().setColor('#FFD700').setTitle(`🔥 ${playerInfo.gameName} ist auf einer Siegessträhne! 🔥`).setDescription("DREI Siege in Folge! Weiter so, Champion! 🚀").setTimestamp();
-            await targetChannel.send({ embeds: [embed] }).catch(console.error);
-            if (playerFocusData) playerFocusData.winStreakNotified = true;
+            await targetChannel.send({ embeds: [new EmbedBuilder().setColor('#FFD700').setTitle(`🔥 ${playerInfo.gameName} ist auf einer Siegessträhne! 🔥`).setDescription("DREI Siege in Folge! Weiter so, Champion! 🚀").setTimestamp()] }).catch(console.error);
+            playerFocusData.winStreakNotified = true;
         }
     } else {
-        if (playerFocusData) playerFocusData.winStreakNotified = false; // Streak gebrochen
+        playerFocusData.winStreakNotified = false;
     }
 
-    // 3 Niederlagen in Folge
-    if (lastThreeGames.every(game => game.win === false)) {
+    // Loss Streak
+    if (lastThreeGames.every(g => !g.win)) {
         if (!playerFocusData.lossStreakNotified) {
-            const embed = new EmbedBuilder().setColor('#708090').setTitle(`💀 ${playerInfo.gameName}, was ist da los? 💀`).setDescription("Drei Niederlagen am Stück... Kleine Pause? 🍵 Oder weiterfeeden! 😉").setTimestamp();
-            await targetChannel.send({ embeds: [embed] }).catch(console.error);
-            if (playerFocusData) playerFocusData.lossStreakNotified = true;
+            await targetChannel.send({ embeds: [new EmbedBuilder().setColor('#708090').setTitle(`💀 ${playerInfo.gameName}, was ist da los? 💀`).setDescription("Drei Niederlagen am Stück... Kleine Pause? 🍵 Oder weiterfeeden! 😉").setTimestamp()] }).catch(console.error);
+            playerFocusData.lossStreakNotified = true;
         }
     } else {
-        if (playerFocusData) playerFocusData.lossStreakNotified = false; // Streak gebrochen
+        playerFocusData.lossStreakNotified = false;
     }
 
-    // 3 Spiele mit KDA < 1
-    const onActualBadKdaStreak = lastThreeGames.every(game => game.kdaRatio < 1);
-    if (onActualBadKdaStreak) {
-        if (!playerFocusData.onBadKdaStreakNotified) { // Nur einmal benachrichtigen, wenn die Streak beginnt
-            const embed = new EmbedBuilder().setColor('#A52A2A').setTitle(`📉 ${playerInfo.gameName}, deine KDA braucht etwas Liebe! 📉`).setDescription("Drei Spiele hintereinander mit einer KDA unter 1. Zeit, das Ruder rumzureißen!").setTimestamp();
-            await targetChannel.send({ embeds: [embed] }).catch(console.error);
-            if (playerFocusData) {
-                playerFocusData.onBadKdaStreak = true;
-                playerFocusData.onBadKdaStreakNotified = true;
-            }
+    // Bad KDA Streak
+    const currentBadKdaStreak = lastThreeGames.every(g => g.kdaRatio < 1);
+    if (currentBadKdaStreak) {
+        if (!playerFocusData.onBadKdaStreakNotified) {
+            await targetChannel.send({ embeds: [new EmbedBuilder().setColor('#A52A2A').setTitle(`📉 ${playerInfo.gameName}, KDA im Keller! 📉`).setDescription("Drei Spiele mit KDA < 1. Zeit das Ruder rumzureißen!").setTimestamp()] }).catch(console.error);
+            playerFocusData.onBadKdaStreak = true;
+            playerFocusData.onBadKdaStreakNotified = true;
         }
     } else {
-        // Wenn die aktuelle 3er Serie nicht schlecht ist, aber vorher eine markiert war
-        if (playerFocusData && playerFocusData.onBadKdaStreak) {
-            // Prüfen, ob das LETZTE Spiel die Serie gebrochen hat
-            if (recentGames[0].kdaRatio >= 1) {
-                const embed = new EmbedBuilder().setColor('#34A853').setTitle(`✨ ${playerInfo.gameName} hat die KDA-Kurve gekriegt! ✨`).setDescription(`Starke Leistung! Die Serie mit KDA unter 1 wurde durchbrochen mit einer KDA von ${recentGames[0].kdaRatio.toFixed(2)}! 💪`).setTimestamp();
-                await targetChannel.send({ embeds: [embed] }).catch(console.error);
-            }
-            playerFocusData.onBadKdaStreak = false; // Streak ist definitiv vorbei
-            playerFocusData.onBadKdaStreakNotified = false; // Für nächste Streak wieder benachrichtigen
+        if (playerFocusData.onBadKdaStreak && recentGames[0].kdaRatio >= 1) {
+            await targetChannel.send({ embeds: [new EmbedBuilder().setColor('#34A853').setTitle(`✨ ${playerInfo.gameName} hat die KDA-Kurve gekriegt! ✨`).setDescription(`Stark! KDA < 1 Serie gebrochen mit KDA ${recentGames[0].kdaRatio.toFixed(2)}! 💪`).setTimestamp()] }).catch(console.error);
         }
-        // Auch wenn keine "Bruch"-Nachricht gesendet wurde, ist die Streak vorbei.
-        if (playerFocusData) playerFocusData.onBadKdaStreakNotified = false;
+        playerFocusData.onBadKdaStreak = false;
+        playerFocusData.onBadKdaStreakNotified = false;
     }
-    saveFocusData(focusData); // Speichere die aktualisierten Streak-Flags
+    saveFocusData(focusData);
 }
-
 
 // --- Polling Funktion ---
 async function checkFocusedPlayerForNewGames() {
     if (!RIOT_API_KEY) return;
-    console.log(`[${new Date().toLocaleString()}] [FocusTracker] Starte Prüfung auf neue Spiele...`);
-
+    console.log(`[${new Date().toLocaleString()}] [FocusTracker] Starte Prüfung...`);
     for (const guildId in focusData) {
         const guildConfig = focusData[guildId];
-        if (!guildConfig.notificationChannelId || !guildConfig.focusedPlayer || !guildConfig.focusedPlayer.puuid) {
-            continue;
-        }
-
+        if (!guildConfig.notificationChannelId || !guildConfig.focusedPlayer?.puuid) continue;
         const player = guildConfig.focusedPlayer;
         const channel = client.channels.cache.get(guildConfig.notificationChannelId);
-        if (!channel) {
-            console.warn(`[FocusTracker] Kanal ${guildConfig.notificationChannelId} für Guild ${guildId} nicht gefunden.`);
-            continue;
-        }
+        if (!channel) { console.warn(`[FocusTracker] Kanal ${guildConfig.notificationChannelId} für Guild ${guildId} nicht gefunden.`); continue; }
 
         const matchApiRoutingValue = player.apiRoutingValue || 'europe';
-
         try {
             console.log(`[FocusTracker] Prüfe Spieler: ${player.riotId}`);
             const matchIdsApiUrl = `https://${matchApiRoutingValue}.api.riotgames.com/lol/match/v5/matches/by-puuid/${player.puuid}/ids?count=${MATCHES_TO_CHECK_PER_POLL}&type=normal&type=ranked&type=tourney`;
-            const matchIdsResponse = await axios.get(matchIdsApiUrl, { headers: { "X-Riot-Token": RIOT_API_KEY } });
-
+            const matchIdsResponse = await axios.get(matchIdsApiUrl, { headers: { "X-Riot-Token": RIOT_API_KEY }});
             if (!matchIdsResponse.data || matchIdsResponse.data.length === 0) continue;
 
-            let newGamesFoundInApi = [];
-            for (const matchId of matchIdsResponse.data) { // Neueste zuerst von API
-                if (matchId === player.lastAnnouncedGameIdInPolling) {
-                    break;
-                }
-                newGamesFoundInApi.push(matchId);
+            let newMatchIdsToProcess = [];
+            for (const matchId of matchIdsResponse.data) {
+                if (matchId === player.lastAnnouncedGameIdInPolling) break;
+                newMatchIdsToProcess.push(matchId);
             }
-            const gamesToProcessChronologically = newGamesFoundInApi.reverse(); // Ältestes zuerst verarbeiten
+            const gamesToProcessChronologically = newMatchIdsToProcess.reverse();
 
             if (gamesToProcessChronologically.length > 0) {
-                console.log(`[FocusTracker] ${gamesToProcessChronologically.length} neue(s) Spiel(e) für ${player.riotId} gefunden.`);
+                console.log(`[FocusTracker] ${gamesToProcessChronologically.length} neue(s) Spiel(e) für ${player.riotId}.`);
                 let latestProcessedMatchIdThisRun = player.lastAnnouncedGameIdInPolling;
-
                 for (const newMatchId of gamesToProcessChronologically) {
                     const gameAnalysisResult = await analyzeAndPostMatch(newMatchId, player.puuid, channel, player, false, true);
                     if (gameAnalysisResult) {
                         latestProcessedMatchIdThisRun = newMatchId;
-                        if (focusData[guildId]?.focusedPlayer) {
+                        if (focusData[guildId]?.focusedPlayer) { // Erneuter Check, falls Fokus während der Schleife entfernt wurde
                             const playerToUpdate = focusData[guildId].focusedPlayer;
                             if (!playerToUpdate.recentGames) playerToUpdate.recentGames = [];
-                            playerToUpdate.recentGames.unshift({
-                                matchId: gameAnalysisResult.matchId,
-                                win: gameAnalysisResult.win,
-                                kdaRatio: gameAnalysisResult.kdaRatio,
-                                timestamp: gameAnalysisResult.gameEndTimestamp
-                            });
-                            if (playerToUpdate.recentGames.length > MAX_RECENT_GAMES) {
-                                playerToUpdate.recentGames.pop();
-                            }
+                            playerToUpdate.recentGames.unshift(gameAnalysisResult);
+                            if (playerToUpdate.recentGames.length > MAX_RECENT_GAMES) playerToUpdate.recentGames.pop();
                             await checkAndAnnounceStreaks(playerToUpdate.recentGames, channel, playerToUpdate, guildId);
                         }
                     }
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Pause zwischen Verarbeitung einzelner neuer Spiele
                 }
                 if (latestProcessedMatchIdThisRun !== player.lastAnnouncedGameIdInPolling && focusData[guildId]?.focusedPlayer) {
                     focusData[guildId].focusedPlayer.lastAnnouncedGameIdInPolling = latestProcessedMatchIdThisRun;
                 }
+                saveFocusData(focusData); // Einmal speichern nach Verarbeitung aller neuen Spiele für diesen Spieler
+            } else if (matchIdsResponse.data.length > 0 && !player.lastAnnouncedGameIdInPolling && focusData[guildId]?.focusedPlayer) {
+                focusData[guildId].focusedPlayer.lastAnnouncedGameIdInPolling = matchIdsResponse.data[0];
                 saveFocusData(focusData);
-            } else if (matchIdsResponse.data.length > 0 && !player.lastAnnouncedGameIdInPolling) {
-                if (focusData[guildId]?.focusedPlayer) {
-                    focusData[guildId].focusedPlayer.lastAnnouncedGameIdInPolling = matchIdsResponse.data[0];
-                    saveFocusData(focusData);
-                    console.log(`[FocusTracker] Initiales lastAnnouncedGameIdInPolling für ${player.riotId} auf ${matchIdsResponse.data[0]} gesetzt.`);
-                }
+                console.log(`[FocusTracker] Initiales lastAnnouncedGameIdInPolling für ${player.riotId} auf ${matchIdsResponse.data[0]} gesetzt.`);
             }
-        } catch (error) {
-            console.error(`[FocusTracker] Fehler beim Prüfen von Spieler ${player.riotId}:`, error.response ? JSON.stringify(error.response.data) : error.message);
-        }
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        } catch (error) { console.error(`[FocusTracker] Fehler Spieler ${player.riotId}:`, error.response ? JSON.stringify(error.response.data) : error.message); }
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Pause vor dem nächsten Guild-Check
     }
-    console.log(`[${new Date().toLocaleString()}] [FocusTracker] Polling-Durchlauf abgeschlossen.`);
+    console.log(`[${new Date().toLocaleString()}] [FocusTracker] Prüfung abgeschlossen.`);
 }
 
 // --- Client Event Handler ---
 client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}!`);
-    console.log(`Bot ist bereit und auf ${client.guilds.cache.size} Servern aktiv.`);
-    client.user.setActivity('League of Legends', { type: 'WATCHING' });
-
+    console.log(`Logged in as ${client.user.tag}! Auf ${client.guilds.cache.size} Servern.`);
+    client.user.setActivity('LoL Matches', { type: 'WATCHING' });
     if (RIOT_API_KEY) {
-        console.log("[FocusTracker] Starte Polling-Intervall...");
+        console.log("[FocusTracker] Starte Polling...");
         setInterval(checkFocusedPlayerForNewGames, POLLING_INTERVAL_MS);
-        setTimeout(checkFocusedPlayerForNewGames, 10000);
-    } else {
-        console.warn("[FocusTracker] Polling nicht gestartet, da kein RIOT_API_KEY vorhanden ist.");
-    }
+        setTimeout(checkFocusedPlayerForNewGames, 10000); // Erster Check nach 10 Sekunden
+    } else { console.warn("[FocusTracker] Polling nicht gestartet: RIOT_API_KEY fehlt."); }
 });
 
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
+    // Kanalbeschränkung - WICHTIG: "DEINE_ECHTE_KANAL_ID_HIER" ersetzen oder Array leer lassen/Zeilen auskommentieren
+    // const ALLOWED_CHANNEL_IDS = ["DEINE_ECHTE_KANAL_ID_HIER"]; // Beispiel
+    if (ALLOWED_CHANNEL_IDS.length > 0 && !ALLOWED_CHANNEL_IDS.includes(message.channel.id)) {
+        // console.log(`Befehl in nicht erlaubtem Kanal ${message.channel.name} (ID: ${message.channel.id}) ignoriert.`);
+        return;
+    }
+
     const prefix = '!';
     if (!message.content.startsWith(prefix)) return;
 
@@ -287,50 +270,35 @@ client.on('messageCreate', async message => {
     const commandArgs = argsWithoutPrefix.split(/ +/);
     const command = commandArgs.shift().toLowerCase();
 
-    // --- HILFE BEFEHL ---
     if (command === 'help' || command === 'hilfe') {
         const helpEmbed = new EmbedBuilder()
-            .setColor('#0099ff')
-            .setTitle('Bot Befehlsübersicht')
-            .setDescription('Hier sind alle verfügbaren Befehle:')
+            .setColor('#0099ff').setTitle('Bot Befehlsübersicht').setDescription('Verfügbare Befehle:')
             .addFields(
-                { name: `${prefix}ping`, value: 'Bot-Status prüfen.' },
-                { name: `${prefix}hallo`, value: 'Freundliche Begrüßung.' },
-                { name: `${prefix}setfocuschannel #kanal`, value: '**Eule:** Kanal für Analyse-Posts festlegen.' },
-                { name: `${prefix}focus <RiotID#TAG>`, value: 'Fokus setzen & letzte 3 Spiele analysieren. Startet 30-minütiges Tracking.' },
-                // { name: `${prefix}currentfocus`, value: 'Zeigt den aktuell fokussierten Spieler.' },
-                { name: `${prefix}unfocus`, value: 'Entfernt den Fokus & stoppt Tracking.' },
-                { name: `${prefix}help / ${prefix}hilfe`, value: 'Zeigt diese Hilfe.' }
-            )
-            .setTimestamp().setFooter({ text: 'LoL Analyse Bot' });
-        message.channel.send({ embeds: [helpEmbed] }).catch(console.error);
-        return;
+                { name: `${prefix}ping`, value: 'Bot-Status.' },
+                { name: `${prefix}hallo`, value: 'Begrüßung.' },
+                { name: `${prefix}setfocuschannel #kanal`, value: '**Rolle "Eule":** Kanal für Analyse-Posts.' },
+                { name: `${prefix}focus <RiotID#TAG>`, value: 'Fokus setzen & letzte 3 Spiele analysieren. Startet 30-Minuten-Tracking.' },
+                { name: `${prefix}currentfocus`, value: 'Zeigt fokussierten Spieler.' },
+                { name: `${prefix}unfocus`, value: 'Entfernt Fokus & stoppt Tracking.' },
+                { name: `${prefix}help / ${prefix}hilfe`, value: 'Diese Hilfe.' }
+            ).setTimestamp().setFooter({ text: 'LoL Analyse Bot' });
+        message.channel.send({ embeds: [helpEmbed] }).catch(console.error); return;
     }
-
-    // --- Standard Befehle ---
     if (command === 'ping') { message.reply('Pong!').catch(console.error); return; }
     if (command === 'hallo') { message.channel.send(`Hallo ${message.author.username}! API Key: ${RIOT_API_KEY ? 'OK' : 'FEHLT'}`).catch(console.error); return; }
 
-    // --- Fokus-Management Befehle ---
     if (command === 'setfocuschannel') {
-        const requiredRoleName = "Eule"
-        if (!message.member.roles.cache.some(role => role.name.toLowerCase() === requiredRoleName.toLowerCase())) {
-            // Alternativ, wenn du die Rollen-ID verwendest (empfohlen):
-            // if (!message.member.roles.cache.has(requiredRoleId)) {
-            return message.reply(`Du benötigst die Rolle "${requiredRoleName}", um diesen Befehl zu verwenden.`).catch(console.error);
+        const requiredRoleName = "Eule"; // Passe diesen Namen an eure Rolle an!
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator) && !message.member.roles.cache.some(role => role.name.toLowerCase() === requiredRoleName.toLowerCase())) {
+            return message.reply(`Admin-Rechte oder Rolle "${requiredRoleName}" benötigt.`).catch(console.error);
         }
         const mentionedChannel = message.mentions.channels.first();
-        if (!mentionedChannel) {
-            return message.reply("Bitte erwähne einen Kanal! Beispiel: `!setfocuschannel #lol-analyse`").catch(console.error);
-        }
+        if (!mentionedChannel) return message.reply("Kanal erwähnen: `!setfocuschannel #kanal`").catch(console.error);
         const guildId = message.guild.id;
-        if (!focusData[guildId]) {
-            focusData[guildId] = { notificationChannelId: null, focusedPlayer: null };
-        }
+        if (!focusData[guildId]) focusData[guildId] = { notificationChannelId: null, focusedPlayer: null };
         focusData[guildId].notificationChannelId = mentionedChannel.id;
         saveFocusData(focusData);
-        message.reply(`Analyse-Kanal erfolgreich auf ${mentionedChannel} gesetzt!`).catch(console.error);
-        return;
+        message.reply(`Analyse-Kanal auf ${mentionedChannel} gesetzt!`).catch(console.error); return;
     }
 
     if (command === 'unfocus') {
@@ -340,19 +308,16 @@ client.on('messageCreate', async message => {
             focusData[guildId].focusedPlayer = null;
             saveFocusData(focusData);
             message.reply(`${oldFocusRiotId} nicht mehr im Fokus. Tracking gestoppt.`).catch(console.error);
-        } else { message.reply("Kein Spieler im Fokus.").catch(console.error); }
-        return;
+        } else { message.reply("Kein Spieler im Fokus.").catch(console.error); } return;
     }
 
     if (command === 'currentfocus') {
         const guildId = message.guild.id;
         if (focusData[guildId]?.focusedPlayer) {
             message.reply(`Aktuell im Fokus: ${focusData[guildId].focusedPlayer.riotId}`).catch(console.error);
-        } else { message.reply("Kein Spieler im Fokus.").catch(console.error); }
-        return;
+        } else { message.reply("Kein Spieler im Fokus.").catch(console.error); } return;
     }
 
-    // --- Hauptbefehl: !focus ---
     if (command === 'focus') {
         if (commandArgs.length === 0) return message.reply('Riot ID angeben: `!focus Name#TAG`').catch(console.error);
         const riotIdFull = commandArgs.join(" ");
@@ -361,10 +326,9 @@ client.on('messageCreate', async message => {
         const tagLineInput = parts[1]?.trim();
 
         if (!gameNameInput || !tagLineInput) return message.reply('Format: `!focus Name#TAG`').catch(console.error);
-        if (!RIOT_API_KEY) return message.reply('Riot API Key fehlt.').catch(console.error);
-
+        if (!RIOT_API_KEY) return message.reply('API Key fehlt.').catch(console.error);
         const guildId = message.guild.id;
-        if (!focusData[guildId]?.notificationChannelId) return message.reply("Analyse-Kanal fehlt. `!setfocuschannel #kanal`").catch(console.error);
+        if (!focusData[guildId]?.notificationChannelId) return message.reply("Analyse-Kanal fehlt (`!setfocuschannel`)").catch(console.error);
 
         const notificationChannel = client.channels.cache.get(focusData[guildId].notificationChannelId);
         if (!notificationChannel) return message.reply("Analyse-Kanal nicht gefunden.").catch(console.error);
@@ -377,7 +341,6 @@ client.on('messageCreate', async message => {
             const accountApiUrl = `https://${accountApiRoutingValue}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameNameInput)}/${encodeURIComponent(tagLineInput)}`;
             const accountResponse = await axios.get(accountApiUrl, { headers: { "X-Riot-Token": RIOT_API_KEY } });
             const { puuid, gameName: apiGameName, tagLine: apiTagLine } = accountResponse.data;
-
             if (!puuid) return message.reply(`PUUID für ${gameNameInput}#${tagLineInput} nicht gefunden.`).catch(console.error);
 
             const playerInfo = { puuid, riotId: `${apiGameName}#${apiTagLine}`, gameName: apiGameName, tagLine: apiTagLine, apiRoutingValue: matchApiRoutingValue };
@@ -385,52 +348,45 @@ client.on('messageCreate', async message => {
             if (!focusData[guildId]) focusData[guildId] = { notificationChannelId: focusData[guildId].notificationChannelId, focusedPlayer: null };
             focusData[guildId].focusedPlayer = {
                 ...playerInfo,
-                lastAnnouncedGameIdInPolling: null,
-                recentGames: [],
-                winStreakNotified: false, // Streak-Flags initialisieren
-                lossStreakNotified: false,
-                onBadKdaStreak: false,
-                onBadKdaStreakNotified: false
+                lastAnnouncedGameIdInPolling: null, recentGames: [],
+                winStreakNotified: false, lossStreakNotified: false, onBadKdaStreak: false, onBadKdaStreakNotified: false
             };
-            saveFocusData(focusData);
-            await notificationChannel.send(`Fokus gesetzt auf **${apiGameName}#${apiTagLine}**. Initiale Analyse der letzten 3 Spiele...`).catch(console.error);
+            // Speichern erst nach der initialen Analyse, um Race Conditions mit Polling zu vermeiden, wenn es sehr schnell ginge
+            // saveFocusData(focusData);
+            await notificationChannel.send(`Fokus auf **${apiGameName}#${apiTagLine}**. Initiale Analyse (letzte 3 Spiele)...`).catch(console.error);
 
             const matchIdsApiUrl = `https://${matchApiRoutingValue}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?count=3&type=normal&type=ranked&type=tourney`;
             const matchIdsResponse = await axios.get(matchIdsApiUrl, { headers: { "X-Riot-Token": RIOT_API_KEY } });
-
-            if (!matchIdsResponse.data || matchIdsResponse.data.length === 0) {
-                return notificationChannel.send(`Keine Spiele für ${apiGameName}#${apiTagLine} gefunden.`).catch(console.error);
-            }
+            if (!matchIdsResponse.data?.length) return notificationChannel.send(`Keine Spiele für ${apiGameName}#${apiTagLine}.`).catch(console.error);
 
             await notificationChannel.send(`--- Initiale Analyse für ${apiGameName}#${apiTagLine} ---`).catch(console.error);
             let analyzedGameCount = 0;
             let latestAnalyzedMatchIdForPollingInit = null;
-            const initialGamesForStreak = [];
+            const initialGamesForStreak = []; // Wird von alt nach neu gefüllt für korrekte Streak-Logik
 
-            for (const matchId of matchIdsResponse.data) { // Neueste zuerst
+            for (const matchId of [...matchIdsResponse.data].reverse()) { // Kopiere und reverse für chronologische Verarbeitung
                 await new Promise(resolve => setTimeout(resolve, 1500));
                 const gameAnalysisResult = await analyzeAndPostMatch(matchId, puuid, notificationChannel, playerInfo, true, false);
                 if (gameAnalysisResult) {
                     analyzedGameCount++;
-                    if (!latestAnalyzedMatchIdForPollingInit) latestAnalyzedMatchIdForPollingInit = matchId;
-                    initialGamesForStreak.unshift(gameAnalysisResult); // Ältestes zuerst in der Streak-Liste
+                    latestAnalyzedMatchIdForPollingInit = gameAnalysisResult.matchId; // Das *letzte* verarbeitete ist das neueste für Polling-Start
+                    initialGamesForStreak.push(gameAnalysisResult); // Füge am Ende an (chronologisch)
                 }
             }
 
             if (focusData[guildId]?.focusedPlayer) {
-                focusData[guildId].focusedPlayer.recentGames = initialGamesForStreak.slice(0, MAX_RECENT_GAMES);
-                if (latestAnalyzedMatchIdForPollingInit) {
+                // `recentGames` soll neuestes Spiel an Index 0 haben
+                focusData[guildId].focusedPlayer.recentGames = initialGamesForStreak.reverse().slice(0, MAX_RECENT_GAMES);
+                if (latestAnalyzedMatchIdForPollingInit) { // Sollte das neueste der 3 analysierten sein
                     focusData[guildId].focusedPlayer.lastAnnouncedGameIdInPolling = latestAnalyzedMatchIdForPollingInit;
                 }
                 // Prüfe Streaks nach initialer Analyse
                 await checkAndAnnounceStreaks(focusData[guildId].focusedPlayer.recentGames, notificationChannel, focusData[guildId].focusedPlayer, guildId);
             }
-            saveFocusData(focusData);
+            saveFocusData(focusData); // Jetzt speichern, nachdem alles initialisiert wurde
             await notificationChannel.send(`--- Initiale Analyse (${analyzedGameCount} Spiele) für ${apiGameName}#${apiTagLine} abgeschlossen ---`).catch(console.error);
-
         } catch (error) {
             console.error(`[focus] Fehler für ${gameNameInput}#${tagLineInput}:`, error.response ? JSON.stringify(error.response.data) : error.message);
-            // Fehlerbehandlung wie zuvor
             if (error.response) {
                 if (error.response.status === 403) { message.reply('API Key ungültig/abgelaufen.').catch(console.error); }
                 else if (error.response.status === 404) { message.reply(`Spieler ${gameNameInput}#${tagLineInput} nicht gefunden.`).catch(console.error); }
