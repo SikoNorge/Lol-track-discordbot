@@ -1,0 +1,37 @@
+{
+    "1374082595134115880": {
+        "notificationChannelId": "1374115589005512784",
+        "focusedPlayer": {
+            "puuid": "Ljji217LFykXSr2ysBFXBQHvQwGZaHGr-YkAzvxat-LOgzbslZgr8e_Uo1iQ4AnAloKQ-UvteNq1_A",
+            "riotId": "MaxorusTV#EUW",
+            "gameName": "MaxorusTV",
+            "tagLine": "EUW",
+            "apiRoutingValue": "europe",
+            "lastAnnouncedGameIdInPolling": "EUW1_7406060477",
+            "recentGames": [
+                {
+                    "matchId": "EUW1_7405978942",
+                    "win": true,
+                    "kdaRatio": 1.3333333333333333,
+                    "gameEndTimestamp": 1747682087090
+                },
+                {
+                    "matchId": "EUW1_7406041869",
+                    "win": false,
+                    "kdaRatio": 0,
+                    "gameEndTimestamp": 1747682911279
+                },
+                {
+                    "matchId": "EUW1_7406060477",
+                    "win": false,
+                    "kdaRatio": 0.7,
+                    "gameEndTimestamp": 1747685003748
+                }
+            ],
+            "winStreakNotified": false,
+            "lossStreakNotified": false,
+            "onBadKdaStreak": false,
+            "onBadKdaStreakNotified": false
+        }
+    }
+}

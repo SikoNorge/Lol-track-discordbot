@@ -1,0 +1,13 @@
+{
+  "guildID_123": {
+    "notificationChannelId": "discordChannelID_ABC",
+    "focusedPlayer": {
+      "puuid": "PUUID_DES_SPIELERS",
+      "riotId": "SpielerName#TAG",
+      "gameName": "SpielerName",
+      "tagLine": "TAG",
+      "lastAnnouncedGameIdInPolling": null,
+      "recentGames": []
+    }
+  }
+}
