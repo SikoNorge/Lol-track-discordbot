@@ -3,7 +3,7 @@ services:
     build:
       context: ./bot
       dockerfile: Dockerfile
-    container_name: mein_lol_discord_bot
+    container_name: lolbot
     restart: unless-stopped
     env_file:
       - ./bot/.env
