@@ -1,5 +1,6 @@
 // Umgebungsvariablen laden (wichtig: als Erstes!)
 require('dotenv').config();
+const axios = require('axios');
 
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 // const axios = require('axios'); // Wird später für Riot API benötigt
@@ -43,9 +44,66 @@ client.on('messageCreate', async message => {
         message.channel.send(`Hallo ${message.author.username}! Riot API Key geladen: ${RIOT_API_KEY ? 'Ja' : 'Nein (bitte konfigurieren!)'}`);
     }
 
-    // Hier kommt später die Logik für das Abrufen von LoL-Spielen hinzu
-    // z.B. if (message.content.startsWith('!track')) { ... }
+    const prefix = '!'; // Definiere ein Prefix für deine Befehle
+    if (message.content.startsWith(`${prefix}summoner`)) {
+        const args = message.content.slice(prefix.length).trim().split(/ +/);
+        const command = args.shift().toLowerCase(); // 'summoner'
+        const summonerName = args.join(' '); // Der Rest ist der Summoner Name
+
+        if (!summonerName) {
+            return message.reply('Bitte gib einen Summoner-Namen an! Beispiel: `!summoner Dein Name`');
+        }
+
+        if (!RIOT_API_KEY) {
+            return message.reply('Der Riot API Key ist nicht konfiguriert. Bitte den Bot-Admin informieren.');
+        }
+
+        // Wähle deine Region. Beispiele: euw1, eun1, na1, kr, etc.
+        // Du könntest dies auch per Befehl oder Konfiguration änderbar machen.
+        const regionPlatform = 'euw1'; // z.B. EU West
+        const regionRouting = 'europe'; // z.B. europe, americas, asia für Match-V5
+
+        try {
+            const apiUrl = `https://${regionPlatform}.api.riotgames.com/lol/summoner/v4/summoners/by-name/${encodeURIComponent(summonerName)}`;
+
+            message.channel.send(`Suche nach Summoner: ${summonerName}...`);
+
+            const response = await axios.get(apiUrl, {
+                headers: {
+                    "X-Riot-Token": RIOT_API_KEY
+                }
+            });
+
+            const summonerData = response.data;
+            const replyMessage = `
+            Summoner gefunden:
+            Name: ${summonerData.name}
+            Level: ${summonerData.summonerLevel}
+            Account ID: ${summonerData.accountId}
+            PUUID: ${summonerData.puuid} 
+            `;
+            // PUUID ist SEHR wichtig für spätere Abfragen (z.B. Match History)
+            message.channel.send(`\`\`\`${replyMessage}\`\`\``);
+
+        } catch (error) {
+            console.error("Fehler bei der Riot API Anfrage:", error.response ? error.response.data : error.message);
+            if (error.response) {
+                if (error.response.status === 404) {
+                    message.reply(`Summoner "${summonerName}" nicht gefunden in Region ${regionPlatform}.`);
+                } else if (error.response.status === 403) {
+                    message.reply('Riot API Key ist ungültig oder hat keine Berechtigung (Forbidden).');
+                } else if (error.response.status === 429) {
+                    message.reply('Riot API Rate Limit erreicht. Bitte später erneut versuchen.');
+                } else {
+                    message.reply(`Fehler bei der Riot API Anfrage: Status ${error.response.status}`);
+                }
+            } else {
+                message.reply('Ein unbekannter Fehler ist bei der Kommunikation mit der Riot API aufgetreten.');
+            }
+        }
+    }
 });
+
 
 // Mit dem Discord Token einloggen
 client.login(DISCORD_TOKEN)
