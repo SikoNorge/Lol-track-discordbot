@@ -319,21 +319,21 @@ client.on('messageCreate', async message => {
     if (command === 'hallo') { message.channel.send(`Hallo ${message.author.username}! API Key: ${RIOT_API_KEY ? 'OK' : 'FEHLT'}`).catch(console.error); return; }
 
     // --- Fokus-Management Befehle ---
-    if (command === 'setfocuschannel') {
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            return message.reply("Du benötigst Administrator-Rechte.").catch(console.error);
-        }
-        const mentionedChannel = message.mentions.channels.first();
-        if (!mentionedChannel) {
-            return message.reply("Bitte Kanal erwähnen: `!setfocuschannel #kanal`").catch(console.error);
-        }
-        const guildId = message.guild.id;
-        if (!focusData[guildId]) focusData[guildId] = { notificationChannelId: null, focusedPlayer: null };
-        focusData[guildId].notificationChannelId = mentionedChannel.id;
-        saveFocusData(focusData);
-        message.reply(`Analyse-Kanal auf ${mentionedChannel} gesetzt!`).catch(console.error);
-        return;
-    }
+    // if (command === 'setfocuschannel') {
+    //     if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    //         return message.reply("Du benötigst Administrator-Rechte.").catch(console.error);
+    //     }
+    //     const mentionedChannel = message.mentions.channels.first();
+    //     if (!mentionedChannel) {
+    //         return message.reply("Bitte Kanal erwähnen: `!setfocuschannel #kanal`").catch(console.error);
+    //     }
+    //     const guildId = message.guild.id;
+    //     if (!focusData[guildId]) focusData[guildId] = { notificationChannelId: null, focusedPlayer: null };
+    //     focusData[guildId].notificationChannelId = mentionedChannel.id;
+    //     saveFocusData(focusData);
+    //     message.reply(`Analyse-Kanal auf ${mentionedChannel} gesetzt!`).catch(console.error);
+    //     return;
+    // }
 
     if (command === 'unfocus') {
         const guildId = message.guild.id;
