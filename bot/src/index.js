@@ -6,7 +6,6 @@ const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField }
 const axios = require('axios');
 
 const FOCUS_DATA_PATH = path.join(__dirname, 'focus_player_data.json');
-const ALLOWED_CHANNEL_IDS = ["der-einzig-wahre-talk"];
 
 // --- Helferfunktionen für Datenspeicherung ---
 function loadFocusData() {
@@ -281,12 +280,6 @@ client.once('ready', () => {
 
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
-    if (!ALLOWED_CHANNEL_IDS.includes(message.channel.id)) {
-        // Optional: eine stille Nachricht an den Nutzer oder einfach ignorieren
-        // console.log(`Befehl von ${message.author.tag} in nicht erlaubtem Kanal ${message.channel.name} ignoriert.`);
-        // message.reply("Diesen Befehl bitte nur in den dafür vorgesehenen Kanälen verwenden.").catch(console.error); // Vorsicht mit Spam
-        return; // Befehl in diesem Kanal nicht bearbeiten
-    }
     const prefix = '!';
     if (!message.content.startsWith(prefix)) return;
 
