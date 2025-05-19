@@ -1,6 +1,6 @@
 {
   "guildID_123": {
-    "notificationChannelId": "1374125421460852916",
+    "notificationChannelId": "discordChannelID_ABC",
     "focusedPlayer": {
       "puuid": "PUUID_DES_SPIELERS",
       "riotId": "SpielerName#TAG",
