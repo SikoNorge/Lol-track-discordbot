@@ -1,0 +1,19 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Docker
+.dockerignore
+**/Dockerfile # Wenn du Images woanders hostest und nur den Code versionieren willst, sonst entfernen
+
+# Umgebungsvariablen
+bot/.env
+
+# IDE/Editor-spezifisch
+.vscode/
+.idea/
+
+# Betriebssystem-Dateien
+.DS_Store
+Thumbs.db

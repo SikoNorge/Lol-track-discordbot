@@ -1,0 +1,16 @@
+services:
+  lol_bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    container_name: mein_lol_discord_bot
+    restart: unless-stopped
+    env_file:
+      - ./bot/.env
+    volumes:
+      - bot_data:/usr/src/app/data
+      - ./bot/src:/usr/src/app/src
+
+volumes:
+  bot_data:
+
