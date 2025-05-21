@@ -56,7 +56,7 @@ const client = new Client({
 });
 
 const LOL_DDRAGON_VERSION = "15.10.1"; // Regelmäßig prüfen und anpassen!
-const POLLING_INTERVAL_MS = 10 * 1000; // 20 sekunden
+const POLLING_INTERVAL_MS = 30 * 1000; // 20 sekunden
 const MATCHES_TO_CHECK_PER_POLL = 5;
 const MAX_RECENT_GAMES = 10;
 
