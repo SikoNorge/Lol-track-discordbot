@@ -95,11 +95,6 @@ function calculateUtilityScore(playerStats, allParticipantsStats, gameDurationSe
 
     // Endgültige Skalierung und Begrenzung auf 1-10
     // Aktueller theoretischer Max-Score: 3 (KDA/KP) + 2.5 (Dmg) + 2 (Econ) + 1.5 (Vision) + 2 (Obj/CC) + 0.5 (Win) = 11.5
-    // Wir normalisieren es auf 10 als Obergrenze.
-    // Eine Möglichkeit wäre, die Punkte so zu gewichten, dass sie natürlich eher um 10 summieren
-    // Oder wir nehmen den aktuellen Score und skalieren ihn, wenn er über 10 geht.
-    // Fürs Erste: Kappen bei 10.
-
     let finalScore = Math.max(1, Math.min(10, score));
 
     return parseFloat(finalScore.toFixed(1));

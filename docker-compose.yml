@@ -8,9 +8,21 @@ services:
     env_file:
       - ./bot/.env
     volumes:
-      - bot_data:/usr/src/app/data
       - ./bot/src:/usr/src/app/src
+    depends_on:
+      - db
 
+  db:
+    image: mongo:7
+    container_name: lolbot_db
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
 volumes:
-  bot_data:
+  mongo_data:
 
